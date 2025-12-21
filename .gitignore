@@ -1,0 +1,15 @@
+# Local env files (do not commit secrets)
+.dev.vars*
+.env*
+.env.*
+
+
+# Node (only needed if you later add npm deps)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
