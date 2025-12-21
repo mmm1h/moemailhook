@@ -3,8 +3,16 @@ name: Deploy Worker
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - "src/**"
+      - "wrangler.toml"
+      - ".github/workflows/deploy.yml"
   workflow_dispatch: {}
 
+concurrency:
+  group: moemailhook-deploy
+  cancel-in-progress: true
+  
 jobs:
   deploy:
     runs-on: ubuntu-latest
