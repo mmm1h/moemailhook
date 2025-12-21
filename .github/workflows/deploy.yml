@@ -18,12 +18,10 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-          # 这些名字会被写入/更新为 Worker Secret（wrangler secret put）:contentReference[oaicite:7]{index=7}
+          wranglerVersion: "4.56.0"
           secrets: |
             BARK_ENDPOINT
             WEBHOOK_TOKEN
         env:
-          # 从 GitHub Secrets 读出明文，仅在 Actions 运行时存在
           BARK_ENDPOINT: ${{ secrets.BARK_ENDPOINT }}
           WEBHOOK_TOKEN: ${{ secrets.WEBHOOK_TOKEN }}
