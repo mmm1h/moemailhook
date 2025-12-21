@@ -1,3 +1,10 @@
 name = "moemailhook"
 main = "src/index.js"
 compatibility_date = "2025-12-21"
+
+
+keep_vars = true
+
+[vars]
+BARK_GROUP = "邮件"
+EXPECTED_EVENT = "new_message"
