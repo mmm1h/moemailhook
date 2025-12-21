@@ -1,144 +1,135 @@
+
 export default {
-  async fetch(request, env) {
-    try {
-      // 允许 GET 做健康检查
-      if (request.method === "GET") {
-        return json({ ok: true, service: "moemailhook", ts: new Date().toISOString() }, 200);
-      }
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
 
-      if (request.method !== "POST") {
-        return json({ ok: false, error: "Method Not Allowed" }, 405);
-      }
-
-      // 1) 鉴权（推荐开启）
-      if (env.WEBHOOK_TOKEN) {
-        const headerToken = request.headers.get("X-Webhook-Token");
-        const url = new URL(request.url);
-        const queryToken = url.searchParams.get("token");
-        const token = headerToken || queryToken;
-
-        if (!token || token !== env.WEBHOOK_TOKEN) {
-          return json({ ok: false, error: "Unauthorized" }, 401);
-        }
-      }
-
-      // 2) 校验事件
-      const expectedEvent = env.EXPECTED_EVENT || "new_message";
-      const event = request.headers.get("X-Webhook-Event");
-      if (event && event !== expectedEvent) {
-        return json(
-          { ok: true, ignored: true, reason: `Unexpected event: ${event}`, expectedEvent },
-          200
-        );
-      }
-
-      // 3) Content-Type 检查（你给的 webhook 是 application/json）
-      const contentType = request.headers.get("Content-Type") || "";
-      if (!contentType.toLowerCase().includes("application/json")) {
-        return json({ ok: false, error: "Content-Type must be application/json" }, 415);
-      }
-
-      // 4) 解析 JSON body
-      let data;
-      try {
-        data = await request.json();
-      } catch {
-        return json({ ok: false, error: "Invalid JSON body" }, 400);
-      }
-
-      // 5) 获取全部字段（你给的 schema）
-      const payload = {
-        emailId: safeStr(data?.emailId),
-        messageId: safeStr(data?.messageId),
-        fromAddress: safeStr(data?.fromAddress),
-        subject: safeStr(data?.subject),
-        content: safeStr(data?.content),
-        html: safeStr(data?.html),
-        receivedAt: safeStr(data?.receivedAt),
-        toAddress: safeStr(data?.toAddress),
-      };
-
-      // 6) 组装 Bark 标题/正文
-      const title = payload.subject || "(No Subject)";
-
-      const tz = env.TIME_ZONE || "Asia/Shanghai";
-      const atText = formatTime(payload.receivedAt, tz);
-
-      const includeChars = toInt(env.INCLUDE_CONTENT_CHARS, 200);
-      const textFromHtml = stripHtml(payload.html);
-      const mainText = normalizeText(payload.content || textFromHtml);
-      const preview = truncate(mainText, includeChars);
-
-      // body：关键信息 + 摘要（可自行删减字段）
-      const lines = [
-        payload.fromAddress ? `From: ${payload.fromAddress}` : null,
-        payload.toAddress ? `To: ${payload.toAddress}` : null,
-        atText ? `At: ${atText}` : null,
-        payload.messageId ? `MessageId: ${payload.messageId}` : null,
-        payload.emailId ? `EmailId: ${payload.emailId}` : null,
-        preview ? "" : null,
-        preview ? preview : null,
-      ].filter(Boolean);
-
-      // Bark 内容整体上限保护
-      const body = truncate(lines.join("\n"), 1800);
-
-      // 7) Bark endpoint
-      const endpoint = normalizeEndpoint(env.BARK_ENDPOINT);
-      if (!endpoint) {
-        return json({ ok: false, error: "Missing env.BARK_ENDPOINT" }, 500);
-      }
-
-      // 8) Bark query params
-      const qs = new URLSearchParams();
-      if (env.BARK_GROUP) qs.set("group", env.BARK_GROUP);
-
-      const barkUrl =
-        `${endpoint}/${encodeURIComponent(title)}/${encodeURIComponent(body)}` +
-        (qs.toString() ? `?${qs.toString()}` : "");
-
-      // 9) 调用 Bark
-      const resp = await fetch(barkUrl, { method: "GET" });
-      if (!resp.ok) {
-        const t = truncate(await resp.text().catch(() => ""), 300);
-        return json(
-          {
-            ok: false,
-            error: "Bark request failed",
-            status: resp.status,
-            response: t,
-          },
-          502
-        );
-      }
-
-      return json(
-        {
-          ok: true,
-          pushed: true,
-          used: {
-            title,
-            bodyPreview: truncate(body, 240),
-            group: env.BARK_GROUP || "",
-            event: event || "",
-          },
-          received: {
-            // 用于排查：返回你发来的字段（可按需删除，避免暴露内容）
-            emailId: payload.emailId,
-            messageId: payload.messageId,
-            fromAddress: payload.fromAddress,
-            subject: payload.subject,
-            receivedAt: payload.receivedAt,
-            toAddress: payload.toAddress,
-          },
-        },
-        200
-      );
-    } catch (e) {
-      return json({ ok: false, error: "Unhandled error", detail: String(e?.message || e) }, 500);
+    if (url.pathname !== "/hook") {
+      return new Response("Not Found", { status: 404 });
     }
+
+    if (request.method !== "POST") {
+      return new Response("Method Not Allowed", { status: 405 });
+    }
+
+    // token 鉴权（query）
+    if (env.WEBHOOK_TOKEN) {
+      const token = url.searchParams.get("token");
+      if (!token || token !== env.WEBHOOK_TOKEN) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+    }
+
+    const expectedEvent = (env.EXPECTED_EVENT || "new_message").trim();
+    const event = request.headers.get("X-Webhook-Event");
+    if (event && event !== expectedEvent) {
+      return json({ ok: true, ignored: true, reason: `Unexpected event: ${event}` }, 200);
+    }
+
+    const contentType = request.headers.get("Content-Type") || "";
+    if (!contentType.toLowerCase().includes("application/json")) {
+      return json({ ok: false, error: "Content-Type must be application/json" }, 415);
+    }
+
+    let data;
+    try {
+      data = await request.json();
+    } catch {
+      return json({ ok: false, error: "Invalid JSON body" }, 400);
+    }
+
+    const payload = {
+      emailId: safeStr(data?.emailId),
+      messageId: safeStr(data?.messageId),
+      fromAddress: safeStr(data?.fromAddress),
+      subject: safeStr(data?.subject),
+      content: safeStr(data?.content),
+      html: safeStr(data?.html),
+      receivedAt: safeStr(data?.receivedAt),
+      toAddress: safeStr(data?.toAddress),
+    };
+
+    const dedupId = payload.messageId || payload.emailId;
+    if (dedupId) {
+      const ttl = toInt(env.DEDUP_TTL_SECONDS, 600);
+      const dedupKey = new Request(`https://dedup.local/${encodeURIComponent(dedupId)}`);
+
+      const hit = await caches.default.match(dedupKey);
+      if (hit) {
+        return json({ ok: true, dedup: true, id: dedupId }, 200);
+      }
+
+      await caches.default.put(
+        dedupKey,
+        new Response("1", { headers: { "Cache-Control": `max-age=${ttl}` } })
+      );
+    }
+
+    const barkEndpoint = normalizeEndpoint(env.BARK_ENDPOINT);
+    if (!barkEndpoint) {
+      return json({ ok: false, error: "Missing env.BARK_ENDPOINT" }, 500);
+    }
+
+    const title = payload.subject || "(No Subject)";
+
+    const tz = env.TIME_ZONE || "Asia/Shanghai";
+    const atText = formatTime(payload.receivedAt, tz);
+
+    const previewChars = toInt(env.PREVIEW_CHARS, 200);
+    const textFromHtml = stripHtml(payload.html);
+    const mainText = normalizeText(payload.content || textFromHtml);
+    const preview = truncate(mainText, previewChars);
+
+    const lines = [
+      payload.fromAddress ? `From: ${payload.fromAddress}` : null,
+      payload.toAddress ? `To: ${payload.toAddress}` : null,
+      atText ? `At: ${atText}` : null,
+      // payload.messageId ? `MessageId: ${payload.messageId}` : null,
+      // payload.emailId ? `EmailId: ${payload.emailId}` : null,
+      preview ? "" : null,
+      preview ? preview : null,
+    ].filter(Boolean);
+
+    const maxBody = toInt(env.MAX_BARK_BODY_CHARS, 1800);
+    const body = maxBody > 0 ? truncate(lines.join("\n"), maxBody) : lines.join("\n");
+
+    const qs = new URLSearchParams();
+    if (env.BARK_GROUP) qs.set("group", env.BARK_GROUP);
+
+    const barkUrl =
+      `${barkEndpoint}/${encodeURIComponent(title)}/${encodeURIComponent(body)}` +
+      (qs.toString() ? `?${qs.toString()}` : "");
+
+    ctx.waitUntil(pushToBark(barkUrl));
+
+    return json(
+      {
+        ok: true,
+        accepted: true,
+        dedupId: dedupId || "",
+        used: {
+          title,
+          bodyPreview: truncate(body, 240),
+          group: env.BARK_GROUP || "",
+          event: event || "",
+        },
+      },
+      200
+    );
   },
 };
+
+async function pushToBark(url) {
+  try {
+    const resp = await fetch(url, { method: "GET" });
+    if (!resp.ok) {
+      console.log("Bark push failed:", resp.status);
+    }
+  } catch (e) {
+    console.log("Bark push exception:", String(e?.message || e));
+  }
+}
+
+/* ---------------- helpers ---------------- */
 
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
