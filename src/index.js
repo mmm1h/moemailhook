@@ -80,13 +80,13 @@ export default {
     const preview = truncate(mainText, previewChars);
 
     const lines = [
-      payload.fromAddress ? `From: ${payload.fromAddress}` : null,
-      payload.toAddress ? `To: ${payload.toAddress}` : null,
-      atText ? `At: ${atText}` : null,
       // payload.messageId ? `MessageId: ${payload.messageId}` : null,
       // payload.emailId ? `EmailId: ${payload.emailId}` : null,
       preview ? "" : null,
       preview ? preview : null,
+      payload.fromAddress ? `From: ${payload.fromAddress}` : null,
+      payload.toAddress ? `To: ${payload.toAddress}` : null,
+      atText ? `At: ${atText}` : null,
     ].filter(Boolean);
 
     const maxBody = toInt(env.MAX_BARK_BODY_CHARS, 1800);
