@@ -64,9 +64,15 @@ export default {
       );
     }
 
-    const barkEndpoint = normalizeEndpoint(env.BARK_ENDPOINT);
-    if (!barkEndpoint) {
-      return json({ ok: false, error: "Missing env.BARK_ENDPOINT" }, 500);
+    const bark = resolveBarkEndpoint(env.BARK_ENDPOINT);
+    if (!bark.ok) {
+      return json({ ok: false, error: bark.error }, 500);
+    }
+    if (!bark.deviceKey) {
+      return json(
+        { ok: false, error: "Missing device key in env.BARK_ENDPOINT" },
+        500
+      );
     }
 
     const title = payload.subject || "(No Subject)";
@@ -92,14 +98,14 @@ export default {
     const maxBody = toInt(env.MAX_BARK_BODY_CHARS, 1800);
     const body = maxBody > 0 ? truncate(lines.join("\n"), maxBody) : lines.join("\n");
 
-    const qs = new URLSearchParams();
-    if (env.BARK_GROUP) qs.set("group", env.BARK_GROUP);
+    const barkPayload = {
+      title,
+      body,
+      device_key: bark.deviceKey,
+    };
+    if (env.BARK_GROUP) barkPayload.group = env.BARK_GROUP;
 
-    const barkUrl =
-      `${barkEndpoint}/${encodeURIComponent(title)}/${encodeURIComponent(body)}` +
-      (qs.toString() ? `?${qs.toString()}` : "");
-
-    ctx.waitUntil(pushToBark(barkUrl));
+    ctx.waitUntil(pushToBark(bark.pushUrl, barkPayload));
 
     return json(
       {
@@ -118,9 +124,13 @@ export default {
   },
 };
 
-async function pushToBark(url) {
+async function pushToBark(url, payload) {
   try {
-    const resp = await fetch(url, { method: "GET" });
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify(payload),
+    });
     if (!resp.ok) {
       console.log("Bark push failed:", resp.status);
     }
@@ -151,6 +161,39 @@ function normalizeEndpoint(url) {
   const s = safeStr(url).trim();
   if (!s) return "";
   return s.replace(/\/+$/, "");
+}
+
+function resolveBarkEndpoint(url) {
+  const raw = normalizeEndpoint(url);
+  if (!raw) return { ok: false, error: "Missing env.BARK_ENDPOINT" };
+
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return { ok: false, error: "Invalid env.BARK_ENDPOINT" };
+  }
+
+  const path = parsed.pathname.replace(/\/+$/, "");
+  const segments = path.split("/").filter(Boolean);
+  const last = segments[segments.length - 1] || "";
+
+  if (last.toLowerCase() === "push") {
+    return {
+      ok: true,
+      pushUrl: `${parsed.origin}${path}`,
+      deviceKey: "",
+    };
+  }
+
+  const deviceKey = last;
+  const basePath = segments.length > 1 ? `/${segments.slice(0, -1).join("/")}` : "";
+
+  return {
+    ok: true,
+    pushUrl: `${parsed.origin}${basePath}/push`,
+    deviceKey,
+  };
 }
 
 function normalizeText(s) {
