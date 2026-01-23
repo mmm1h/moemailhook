@@ -132,7 +132,12 @@ async function pushToBark(url, payload) {
       body: JSON.stringify(payload),
     });
     if (!resp.ok) {
-      console.log("Bark push failed:", resp.status);
+      const detail = await readResponseSnippet(resp);
+      if (detail) {
+        console.log("Bark push failed:", resp.status, detail);
+      } else {
+        console.log("Bark push failed:", resp.status);
+      }
     }
   } catch (e) {
     console.log("Bark push exception:", String(e?.message || e));
@@ -152,6 +157,7 @@ function safeStr(v) {
   return typeof v === "string" ? v : v == null ? "" : String(v);
 }
 
+
 function toInt(v, fallback) {
   const n = Number.parseInt(String(v ?? ""), 10);
   return Number.isFinite(n) ? n : fallback;
@@ -161,6 +167,16 @@ function normalizeEndpoint(url) {
   const s = safeStr(url).trim();
   if (!s) return "";
   return s.replace(/\/+$/, "");
+}
+
+
+async function readResponseSnippet(resp) {
+  try {
+    const text = await resp.text();
+    return truncate(text, 800);
+  } catch {
+    return "";
+  }
 }
 
 function resolveBarkEndpoint(url) {
